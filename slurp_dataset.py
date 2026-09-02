@@ -70,6 +70,8 @@ class SlurpSLUDataset(Dataset):
                 "No (audio, target) pairs found. Check jsonl_paths / audio_dirs."
             )
 
+        self._bad_files = set()  # tracks corrupt files already warned about
+
     def _resolve_audio(self, filename: str) -> Optional[str]:
         for d in self.audio_dirs:
             candidate = os.path.join(d, filename)
@@ -91,9 +93,24 @@ class SlurpSLUDataset(Dataset):
             wav = wav[: self.max_audio_samples]
         return wav
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx, _retries: int = 0):
         wav_path, target_str = self.items[idx]
-        wav = self._load_wav(wav_path)
+        try:
+            wav = self._load_wav(wav_path)
+        except Exception as e:
+            # A small number of SLURP audio files are corrupted/truncated.
+            # Log once and fall back to a different sample instead of
+            # crashing the whole DataLoader worker.
+            if wav_path not in self._bad_files:
+                self._bad_files.add(wav_path)
+                print(f"[SlurpSLUDataset] WARNING: failed to decode '{wav_path}' "
+                      f"({type(e).__name__}: {e}). Skipping this file for the rest of training.")
+            if _retries >= 10:
+                raise RuntimeError(
+                    f"Too many consecutive corrupt audio files while fetching idx={idx}."
+                ) from e
+            fallback_idx = (idx + 1) % len(self)
+            return self.__getitem__(fallback_idx, _retries=_retries + 1)
 
         ids = self.tokenizer.encode(target_str).ids
         ids = ids[: self.max_target_tokens - 2]
