@@ -41,12 +41,28 @@ def make_intent(scenario: str, action: str) -> str:
     return f"{scenario}_{action}"
 
 
+def _clean_entities(entities: List[Dict]) -> List[Dict[str, str]]:
+    """Drop/normalize malformed entity dicts (missing or non-string type/filler,
+    which occurs for a handful of records in the SLURP release)."""
+    cleaned = []
+    for e in entities or []:
+        etype = e.get("type")
+        filler = e.get("filler")
+        if etype is None or filler is None:
+            continue
+        etype, filler = str(etype).strip(), str(filler).strip()
+        if etype and filler:
+            cleaned.append({"type": etype, "filler": filler})
+    return cleaned
+
+
 def serialize_target(scenario: str, action: str, entities: List[Dict]) -> str:
     intent = make_intent(scenario, action)
+    entities = _clean_entities(entities)
     if not entities:
         slots_str = NO_SLOTS
     else:
-        parts = [f"{e['type'].strip()} {KV_SEP} {e['filler'].strip()}" for e in entities]
+        parts = [f"{e['type']} {KV_SEP} {e['filler']}" for e in entities]
         slots_str = f" {PAIR_SEP} ".join(parts)
     return f"{INTENT_TAG} {intent} {SLOT_SEP} {slots_str}"
 
